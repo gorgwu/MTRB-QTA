@@ -1,0 +1,46 @@
+cff-version: 1.2.0
+message: "If you use MTRB or QTA, please cite the paper below."
+title: "MTRB-QTA: Benchmark Data and Project Materials"
+type: dataset
+authors:
+  - family-names: Zhang
+    given-names: Yuxiang
+  - family-names: Fan
+    given-names: Xin
+  - family-names: Wang
+    given-names: Junjie
+  - family-names: Chen
+    given-names: Chongxian
+  - family-names: Mo
+    given-names: Fan
+  - family-names: Sakai
+    given-names: Tetsuya
+  - family-names: Yamana
+    given-names: Hayato
+repository-code: "https://github.com/FANXIN-Gmail/MTRB-QTA"
+url: "https://arxiv.org/abs/2410.03212"
+preferred-citation:
+  type: conference-paper
+  title: "Data-Efficient Massive Tool Retrieval: A Reinforcement Learning Approach for Query-Tool Alignment with Language Models"
+  authors:
+    - family-names: Zhang
+      given-names: Yuxiang
+    - family-names: Fan
+      given-names: Xin
+    - family-names: Wang
+      given-names: Junjie
+    - family-names: Chen
+      given-names: Chongxian
+    - family-names: Mo
+      given-names: Fan
+    - family-names: Sakai
+      given-names: Tetsuya
+    - family-names: Yamana
+      given-names: Hayato
+  collection-title: "Proceedings of the 2024 Annual International ACM SIGIR Conference on Research and Development in Information Retrieval in the Asia Pacific Region"
+  start: "226"
+  end: "235"
+  publisher:
+    name: "Association for Computing Machinery"
+  year: 2024
+  doi: "10.1145/3673791.3698429"
