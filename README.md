@@ -98,6 +98,43 @@ MTRB-QTA/
 
 This repository is a **benchmark-data and project-page release**. Model training code, checkpoints, and end-to-end reproduction scripts are not currently included.
 
+## JiuwenSwarm retrieval runners
+
+The `scripts/` directory contains four retrieval-only runners: BM25 and Jev for
+MTRB-MetaTool and MTRB-RestBench. They use JiuwenSwarm's configured agent model
+and discovery settings, score the selected tool lists with Sufficiency@5/10 and
+NDCG@5/10, and write a structured text report with per-query JSON records.
+Tool execution and latency reporting are disabled. The Jev runner omits Jev's
+no-tool option, so it measures forced tool ranking; reports record this setting.
+
+Each runner disables system-operation and skill tools, enables deferred-tool
+exposure, and checks the registered inventory after initialization. It stops
+with an explicit error if any tool outside the benchmark catalog,
+`tool_search`, and `tool_call` was registered. The catalog tools remain
+deferred search candidates; only the two progressive wrappers are directly
+visible.
+
+Run commands from `MTRB-QTA` after setting
+`progressive_tool_enabled: true` and the desired
+`tool_discovery_backend` (`bm25` or `jev`) in JiuwenSwarm's config:
+
+```powershell
+# Smoke run, first three queries
+..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_restbench_bm25.py --num-queries 3
+..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_restbench_jev.py --num-queries 3
+
+# Full 90-query runs
+..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_restbench_bm25.py --num-queries all
+..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_restbench_jev.py --num-queries all
+```
+
+The runners require the config backend to match the script. Default reports are
+`mtrb_restbench_bm25_results.txt` and `mtrb_restbench_jev_results.txt`; each run
+overwrites its corresponding report. For MetaTool, use `run_mtrb_bm25.py` and
+`run_mtrb_jev.py` instead. RESTBench's released relevant IDs use a different
+ordering from its rewritten tool catalog, so report IDs are normalized from
+the labeled endpoint names to the rewritten catalog IDs.
+
 ## Citation
 
 If you find MTRB or QTA useful, please cite:

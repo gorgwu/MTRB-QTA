@@ -1,2 +1,7 @@
 .DS_Store
 tmp/
+logs/
+*_smoke.txt
+*_forced_tool.txt
+__pycache__/
+*.py[cod]
