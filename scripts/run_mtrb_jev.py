@@ -111,7 +111,7 @@ async def _run(args: argparse.Namespace) -> Path:
     llm_config = LLMConfig.from_default_model()
     jev_model = str(discovery.get("tool_discovery_model") or "typesafe/jev-1.13")
     max_tools = int(discovery.get("tool_discovery_max_tools") or 10)
-    min_score = float(discovery.get("tool_discovery_min_score", 0.01))
+    min_score = float(discovery.get("tool_discovery_min_score", 0.0))
     api_base = discovery.get("tool_discovery_api_base")
     runtime = JiuwenSwarmNewConversationRuntime()
     await runtime.initialize()
