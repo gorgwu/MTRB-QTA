@@ -19,11 +19,21 @@ from mtrb_common import (
     require_progressive_tools,
     row_for_case,
     selected_cases,
+    selected_tool_catalog,
     write_report,
 )
 
 
 DEFAULT_OUTPUT = "mtrb_metatool_jev_results.txt"
+
+
+def _router_name(model: str) -> str:
+    model = model.lower()
+    if "valen" in model:
+        return "Valen"
+    if "kev" in model:
+        return "Kev"
+    return "Jev"
 
 
 def _parse_num_queries(value: str) -> int | None:
@@ -51,7 +61,25 @@ def _arguments() -> argparse.Namespace:
         type=int,
         help="run one zero-based query index from the test split (for example, 1 for the Leo query)",
     )
-    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="report path")
+    parser.add_argument(
+        "--num-tools",
+        type=int,
+        help="limit the candidate catalog for smoke runs; selected queries' gold tools are always retained",
+    )
+    parser.add_argument("--catalog-seed", type=int, default=42, help="seed for deterministic smoke distractors")
+    model_override = os.getenv("MTRB_TOOL_DISCOVERY_MODEL", "")
+    default_output = (
+        "mtrb_metatool_valen_results.txt"
+        if "valen" in model_override.lower()
+        else DEFAULT_OUTPUT
+    )
+    parser.add_argument("--output", default=default_output, help="report path")
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=15.0,
+        help="System One HTTP timeout in seconds (default: 15)",
+    )
     return parser.parse_args()
 
 
@@ -86,17 +114,37 @@ async def _run(args: argparse.Namespace) -> Path:
     from jiuwenswarm.symphony.llm import LLMConfig
 
     started_at = datetime.now().astimezone()
+    if args.request_timeout <= 0:
+        raise ValueError("request-timeout must be greater than zero")
     config, discovery = load_jiuwenswarm_config()
-    require_backend(discovery, "jev")
+    router_model = str(discovery.get("tool_discovery_model") or "typesafe/jev-1.13")
+    router_name = _router_name(router_model)
+    configured_backend = str(discovery.get("tool_discovery_backend") or "jev").lower()
+    runtime_backend = (
+        "local"
+        if configured_backend == "local" or router_name in {"Kev", "Valen"}
+        else "jev"
+    )
+    if runtime_backend == "local" and router_name == "Jev":
+        router_name = "Local System One"
+    require_backend(discovery, runtime_backend)
     require_progressive_tools(config)
 
     api_key = discovery.get("tool_discovery_api_key") or os.getenv(
         "TOOL_DISCOVERY_API_KEY"
     )
+    api_base = discovery.get("tool_discovery_api_base") or os.getenv(
+        "TOOL_DISCOVERY_API_BASE"
+    )
     if not str(api_key or "").strip():
         raise RuntimeError(
-            "Jev requires TOOL_DISCOVERY_API_KEY. Set it in JiuwenSwarm's "
+            "System One routing requires TOOL_DISCOVERY_API_KEY. Set it in JiuwenSwarm's "
             "config.yaml or config/.env."
+        )
+    if runtime_backend == "local" and not str(api_base or "").strip():
+        raise RuntimeError(
+            "The local System One backend requires TOOL_DISCOVERY_API_BASE "
+            "pointing to the local adapter endpoint."
         )
 
     tool_documents, all_cases = load_dataset()
@@ -108,13 +156,25 @@ async def _run(args: argparse.Namespace) -> Path:
         cases = [all_cases[args.query_index]]
     else:
         cases = selected_cases(all_cases, args.num_queries)
+    original_tool_count = len(tool_documents)
+    tool_documents = selected_tool_catalog(
+        tool_documents, cases, args.num_tools, seed=args.catalog_seed
+    )
     llm_config = LLMConfig.from_default_model()
-    jev_model = str(discovery.get("tool_discovery_model") or "typesafe/jev-1.13")
+    jev_model = router_model
     max_tools = int(discovery.get("tool_discovery_max_tools") or 10)
     min_score = float(discovery.get("tool_discovery_min_score", 0.0))
-    api_base = discovery.get("tool_discovery_api_base")
     runtime = JiuwenSwarmNewConversationRuntime()
     await runtime.initialize()
+    from openjiuwen.harness.rails import progressive_tool_rail
+
+    original_rank = progressive_tool_rail.rank_decisions_api_tools
+
+    async def rank_with_timeout(**kwargs):
+        kwargs["request_timeout"] = args.request_timeout
+        return await original_rank(**kwargs)
+
+    progressive_tool_rail.rank_decisions_api_tools = rank_with_timeout
     benchmark_tools = _make_benchmark_tools(tool_documents)
     rows: list[dict[str, Any]] = []
     try:
@@ -128,7 +188,7 @@ async def _run(args: argparse.Namespace) -> Path:
                     query=case.query,
                     tool_documents=tool_documents,
                     benchmark_tools=benchmark_tools,
-                    backend="jev",
+                    backend=runtime_backend,
                     dataset="MTRB-MetaTool",
                 )
                 agent_result = await runtime.invoke(session_adapter, request, inputs, capture)
@@ -153,26 +213,36 @@ async def _run(args: argparse.Namespace) -> Path:
                 flush=True,
             )
     finally:
-        await runtime.cleanup()
+        try:
+            await runtime.cleanup()
+        finally:
+            progressive_tool_rail.rank_decisions_api_tools = original_rank
 
     return write_report(
         output=args.output,
-        title="MTRB-MetaTool Jev retrieval benchmark",
-        backend="JiuwenSwarm ProgressiveToolRail Jev auto-discovery",
+        title=f"MTRB-MetaTool {router_name} retrieval benchmark",
+        backend=f"JiuwenSwarm ProgressiveToolRail {router_name} auto-discovery",
         description=(
-            "Runs automatic Jev selection in the JiuwenSwarm DeepAgent rail. "
+            f"Runs automatic {router_name} selection through the configured "
+            "System One endpoint in the JiuwenSwarm DeepAgent rail. "
             "When the agent completes without a tool call, its text output is "
             "included in that query record."
         ),
-        model=f"agent: {llm_config.model}; Jev router: {jev_model}",
+        model=f"agent: {llm_config.model}; {router_name} router: {jev_model}",
         config_summary={
-            "tool_discovery_backend": "jev",
+            "tool_discovery_backend": runtime_backend,
             "tool_discovery_model": jev_model,
             "tool_discovery_max_tools": max_tools,
             "tool_discovery_min_score": min_score,
             "tool_discovery_include_no_tool": False,
             "tool_discovery_api_base": api_base or "default Decisions API",
+            "decision_request_timeout_sec": args.request_timeout,
             "tool_count": len(tool_documents),
+            "full_catalog_tool_count": original_tool_count,
+            "catalog_seed": args.catalog_seed if args.num_tools is not None else None,
+            "catalog_scope": "reduced smoke catalog; all selected gold tools retained"
+            if len(tool_documents) < original_tool_count
+            else "full dataset catalog",
             "tool_inventory_policy": "MTRB catalog deferred; only tool_search and tool_call direct",
             "answer_generation_after_selection": True,
             "capture_text_when_no_tool_call": True,

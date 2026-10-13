@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
+import random
 import sys
 import uuid
 from dataclasses import dataclass
@@ -144,10 +146,30 @@ def load_jiuwenswarm_config() -> tuple[dict[str, Any], dict[str, Any]]:
     from jiuwenswarm.dotenv_early import load_dotenv_runtime
 
     load_dotenv_runtime(dotenv_path=get_env_file(), override=True)
+    # A benchmark-specific override is applied after JiuwenSwarm's dotenv file,
+    # which is intentionally loaded with override=True. This lets local model
+    # endpoints be selected without editing the user's shared config/.env.
+    benchmark_overrides = {
+        "tool_discovery_model": "MTRB_TOOL_DISCOVERY_MODEL",
+        "tool_discovery_api_base": "MTRB_TOOL_DISCOVERY_API_BASE",
+        "tool_discovery_api_key": "MTRB_TOOL_DISCOVERY_API_KEY",
+    }
+    for field, env_name in benchmark_overrides.items():
+        value = os.getenv(env_name)
+        if value:
+            if field == "tool_discovery_api_base":
+                os.environ["TOOL_DISCOVERY_API_BASE"] = value
+            elif field == "tool_discovery_api_key":
+                os.environ["TOOL_DISCOVERY_API_KEY"] = value
     config = get_config()
     if not isinstance(config, dict):
         raise RuntimeError("JiuwenSwarm config.yaml did not load as a mapping")
-    return config, get_tool_discovery_config(config)
+    discovery = get_tool_discovery_config(config)
+    for field, env_name in benchmark_overrides.items():
+        value = os.getenv(env_name)
+        if value:
+            discovery[field] = value
+    return config, discovery
 
 
 def require_backend(discovery_config: dict[str, Any], expected: str) -> None:
@@ -254,7 +276,7 @@ class RuntimeSelectionCapture:
             # ToolSearchTool stores the bound callback during ProgressiveToolRail.init;
             # patch the registered executor callback, not the rail method afterward.
             search_tool._search_tools = capture_search
-        elif backend == "jev":
+        elif backend in {"jev", "local"}:
             original = rail._route_deferred_tools
 
             async def capture_route(ctx):
@@ -276,9 +298,9 @@ class RuntimeSelectionCapture:
                         for item in selected
                     ],
                     "error": (
-                        str(discovery_state.get("fallback_error") or "Jev routing fell back to BM25")
+                        str(discovery_state.get("fallback_error") or "System One routing fell back to BM25")
                         if fallback and isinstance(discovery_state, dict)
-                        else "Jev routing fell back to BM25" if fallback else None
+                        else "System One routing fell back to BM25" if fallback else None
                     ),
                 })
                 return selected, fallback
@@ -371,7 +393,18 @@ class JiuwenSwarmNewConversationRuntime:
             tool_documents,
             benchmark_tools,
         )
-        if backend == "jev":
+        # Apply benchmark-only overrides to this fresh session's routing rail.
+        # In particular, the shared JiuwenSwarm .env is loaded with override=True
+        # and may otherwise silently send a local Kev run back to hosted Jev.
+        for field, env_name in (
+            ("tool_discovery_model", "MTRB_TOOL_DISCOVERY_MODEL"),
+            ("tool_discovery_api_base", "MTRB_TOOL_DISCOVERY_API_BASE"),
+            ("tool_discovery_api_key", "MTRB_TOOL_DISCOVERY_API_KEY"),
+        ):
+            value = os.getenv(env_name)
+            if value:
+                setattr(rail._config, field, value)
+        if backend in {"jev", "local"}:
             # This is an experiment-only override on the fresh benchmark agent;
             # standard JiuwenSwarm sessions keep Jev's no-tool option enabled.
             rail._config.tool_discovery_include_no_tool = False
@@ -507,6 +540,39 @@ def selected_cases(
     cases: list[BenchmarkCase], num_queries: int | None
 ) -> list[BenchmarkCase]:
     return cases if num_queries is None else cases[:num_queries]
+
+
+def selected_tool_catalog(
+    tool_documents: list[ToolDocument],
+    cases: list[BenchmarkCase],
+    num_tools: int | None,
+    *,
+    seed: int = 42,
+) -> list[ToolDocument]:
+    """Return a deterministic smoke catalog retaining every selected case's gold tools."""
+    if num_tools is None or num_tools >= len(tool_documents):
+        return tool_documents
+    if num_tools < 1:
+        raise ValueError("num-tools must be at least 1")
+
+    required_ids = {tool_id for case in cases for tool_id in case.relevant_ids}
+    if len(required_ids) > num_tools:
+        raise ValueError(
+            f"num-tools={num_tools} cannot retain all {len(required_ids)} distinct "
+            "gold tools required by the selected queries. Increase --num-tools."
+        )
+    by_id = {tool.mtrb_id: tool for tool in tool_documents}
+    missing = required_ids - by_id.keys()
+    if missing:
+        raise ValueError(f"Selected queries reference tools missing from catalog: {sorted(missing)}")
+
+    distractors = [tool for tool in tool_documents if tool.mtrb_id not in required_ids]
+    rng = random.Random(seed)
+    chosen_ids = required_ids | {
+        tool.mtrb_id for tool in rng.sample(distractors, num_tools - len(required_ids))
+    }
+    # Retain source catalog ordering so the subset doesn't introduce ordering bias.
+    return [tool for tool in tool_documents if tool.mtrb_id in chosen_ids]
 
 
 def compute_metrics(

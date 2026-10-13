@@ -116,7 +116,7 @@ visible.
 
 Run commands from `MTRB-QTA` after setting
 `progressive_tool_enabled: true` and the desired
-`tool_discovery_backend` (`bm25` or `jev`) in JiuwenSwarm's config:
+`tool_discovery_backend` (`bm25`, hosted `jev`, or self-hosted `local`) in JiuwenSwarm's config:
 
 ```powershell
 # Smoke run, first three queries
@@ -134,6 +134,25 @@ overwrites its corresponding report. For MetaTool, use `run_mtrb_bm25.py` and
 `run_mtrb_jev.py` instead. RESTBench's released relevant IDs use a different
 ordering from its rewritten tool catalog, so report IDs are normalized from
 the labeled endpoint names to the rewritten catalog IDs.
+
+### Local Kev smoke run
+
+The Kev runner uses the same JiuwenSwarm runtime and System One request schema,
+but points at a Kev server and defaults to a longer 300-second routing request
+timeout for CPU inference. Set `tool_discovery_backend: local` in
+JiuwenSwarm's config; set these benchmark-only overrides in the PowerShell
+window running the benchmark so the user's config and `.env` remain unchanged:
+
+```powershell
+$env:MTRB_TOOL_DISCOVERY_API_BASE = "http://127.0.0.1:8009/v1/systemone"
+$env:MTRB_TOOL_DISCOVERY_API_KEY = "mtrb-local"
+$env:MTRB_TOOL_DISCOVERY_MODEL = "kev-latest"
+..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_mtrb_kev.py --num-queries 3 --request-timeout 300
+```
+
+The Kev server must accept the same API key (`KEV_API_KEY=mtrb-local`). Reports
+are written to `mtrb_metatool_kev_results.txt` by default; use
+`--query-index 0` for a one-query trial before a larger run.
 
 ## Citation
 
