@@ -395,7 +395,7 @@ class JiuwenSwarmNewConversationRuntime:
         )
         # Apply benchmark-only overrides to this fresh session's routing rail.
         # In particular, the shared JiuwenSwarm .env is loaded with override=True
-        # and may otherwise silently send a local Kev run back to hosted Jev.
+        # and may otherwise silently send a local router run back to hosted Jev.
         for field, env_name in (
             ("tool_discovery_model", "MTRB_TOOL_DISCOVERY_MODEL"),
             ("tool_discovery_api_base", "MTRB_TOOL_DISCOVERY_API_BASE"),
@@ -404,6 +404,16 @@ class JiuwenSwarmNewConversationRuntime:
             value = os.getenv(env_name)
             if value:
                 setattr(rail._config, field, value)
+        # ProgressiveToolRail initializes this flag from the shared config
+        # before the benchmark-only endpoint overrides above are applied.
+        # Re-enable the local backend now that this isolated session has its
+        # endpoint and key; otherwise it silently falls back to BM25.
+        if (
+            backend == "local"
+            and getattr(rail._config, "tool_discovery_api_base", None)
+            and getattr(rail._config, "tool_discovery_api_key", None)
+        ):
+            rail._jev_disabled = False
         if backend in {"jev", "local"}:
             # This is an experiment-only override on the fresh benchmark agent;
             # standard JiuwenSwarm sessions keep Jev's no-tool option enabled.

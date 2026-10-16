@@ -100,12 +100,14 @@ This repository is a **benchmark-data and project-page release**. Model training
 
 ## JiuwenSwarm retrieval runners
 
-The `scripts/` directory contains four retrieval-only runners: BM25 and Jev for
-MTRB-MetaTool and MTRB-RestBench. They use JiuwenSwarm's configured agent model
-and discovery settings, score the selected tool lists with Sufficiency@5/10 and
-NDCG@5/10, and write a structured text report with per-query JSON records.
-Tool execution and latency reporting are disabled. The Jev runner omits Jev's
-no-tool option, so it measures forced tool ranking; reports record this setting.
+The `scripts/` directory contains retrieval-only runners for BM25 and Jev on
+MTRB-MetaTool and MTRB-RestBench, plus local System One runners for both
+benchmarks.
+They use JiuwenSwarm's configured agent model and discovery settings, score the
+selected tool lists with Sufficiency@5/10 and NDCG@5/10, and write a structured
+text report with per-query JSON records. Tool execution and latency reporting
+are disabled. The System One runners omit the no-tool option, so they measure
+forced tool ranking; reports record this setting.
 
 Each runner disables system-operation and skill tools, enables deferred-tool
 exposure, and checks the registered inventory after initialization. It stops
@@ -135,24 +137,36 @@ overwrites its corresponding report. For MetaTool, use `run_mtrb_bm25.py` and
 ordering from its rewritten tool catalog, so report IDs are normalized from
 the labeled endpoint names to the rewritten catalog IDs.
 
-### Local Kev smoke run
+### Local Laya runs
 
-The Kev runner uses the same JiuwenSwarm runtime and System One request schema,
-but points at a Kev server and defaults to a longer 300-second routing request
-timeout for CPU inference. Set `tool_discovery_backend: local` in
-JiuwenSwarm's config; set these benchmark-only overrides in the PowerShell
-window running the benchmark so the user's config and `.env` remain unchanged:
+The Laya runner uses the same JiuwenSwarm runtime and System One request schema,
+with the candidate-choice budget raised for the full 199-tool MetaTool catalog.
+It defaults to `max_len=8192` and `head_max_len=7800`; set either
+`MTRB_TOOL_DISCOVERY_MAX_LEN` or `MTRB_TOOL_DISCOVERY_HEAD_MAX_LEN` to override
+those values. Set `tool_discovery_backend: local` in JiuwenSwarm's config; set
+these benchmark-only overrides in the PowerShell window running the benchmark
+so the user's config and `.env` remain unchanged:
 
 ```powershell
 $env:MTRB_TOOL_DISCOVERY_API_BASE = "http://127.0.0.1:8009/v1/systemone"
 $env:MTRB_TOOL_DISCOVERY_API_KEY = "mtrb-local"
-$env:MTRB_TOOL_DISCOVERY_MODEL = "kev-latest"
-..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_mtrb_kev.py --num-queries 3 --request-timeout 300
+$env:MTRB_TOOL_DISCOVERY_MODEL = "english"
+
+# Three-query MetaTool smoke run; 120 seconds allows for local inference
+..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_mtrb_laya.py --num-queries 3 --request-timeout 120
+
+# All 90 MetaTool queries
+..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_mtrb_laya.py --num-queries all --request-timeout 120
+
+# All 90 RestBench queries
+..\jiuwenswarm\.venv\Scripts\python.exe scripts\run_restbench_laya.py --num-queries all --request-timeout 120
 ```
 
-The Kev server must accept the same API key (`KEV_API_KEY=mtrb-local`). Reports
-are written to `mtrb_metatool_kev_results.txt` by default; use
-`--query-index 0` for a one-query trial before a larger run.
+Configure the Laya server with `LAYA_API_KEY=mtrb-local` to match the bearer
+token above. Reports are written to `mtrb_metatool_laya_results.txt` and
+`mtrb_restbench_laya_results.txt` by default. The local runner uses a 120-second
+request timeout because full-catalog Laya inference took about 35–38 seconds per
+query in the local smoke run.
 
 ## Citation
 

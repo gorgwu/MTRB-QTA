@@ -29,11 +29,13 @@ DEFAULT_OUTPUT = "mtrb_metatool_jev_results.txt"
 
 def _router_name(model: str) -> str:
     model = model.lower()
+    if "laya" in model or model == "english":
+        return "Laya"
     if "valen" in model:
         return "Valen"
-    if "kev" in model:
-        return "Kev"
-    return "Jev"
+    if "jev" in model:
+        return "Jev"
+    return "System One"
 
 
 def _parse_num_queries(value: str) -> int | None:
@@ -68,11 +70,11 @@ def _arguments() -> argparse.Namespace:
     )
     parser.add_argument("--catalog-seed", type=int, default=42, help="seed for deterministic smoke distractors")
     model_override = os.getenv("MTRB_TOOL_DISCOVERY_MODEL", "")
-    default_output = (
-        "mtrb_metatool_valen_results.txt"
-        if "valen" in model_override.lower()
-        else DEFAULT_OUTPUT
-    )
+    model_name = _router_name(model_override)
+    default_output = {
+        "Laya": "mtrb_metatool_laya_results.txt",
+        "Valen": "mtrb_metatool_valen_results.txt",
+    }.get(model_name, DEFAULT_OUTPUT)
     parser.add_argument("--output", default=default_output, help="report path")
     parser.add_argument(
         "--request-timeout",
@@ -122,7 +124,7 @@ async def _run(args: argparse.Namespace) -> Path:
     configured_backend = str(discovery.get("tool_discovery_backend") or "jev").lower()
     runtime_backend = (
         "local"
-        if configured_backend == "local" or router_name in {"Kev", "Valen"}
+        if configured_backend == "local" or router_name in {"Laya", "Valen"}
         else "jev"
     )
     if runtime_backend == "local" and router_name == "Jev":
@@ -161,7 +163,7 @@ async def _run(args: argparse.Namespace) -> Path:
         tool_documents, cases, args.num_tools, seed=args.catalog_seed
     )
     llm_config = LLMConfig.from_default_model()
-    jev_model = router_model
+    discovery_model = router_model
     max_tools = int(discovery.get("tool_discovery_max_tools") or 10)
     min_score = float(discovery.get("tool_discovery_min_score", 0.0))
     runtime = JiuwenSwarmNewConversationRuntime()
@@ -172,6 +174,13 @@ async def _run(args: argparse.Namespace) -> Path:
 
     async def rank_with_timeout(**kwargs):
         kwargs["request_timeout"] = args.request_timeout
+        for field, env_name in (
+            ("max_len", "MTRB_TOOL_DISCOVERY_MAX_LEN"),
+            ("head_max_len", "MTRB_TOOL_DISCOVERY_HEAD_MAX_LEN"),
+        ):
+            value = os.getenv(env_name)
+            if value:
+                kwargs[field] = int(value)
         return await original_rank(**kwargs)
 
     progressive_tool_rail.rank_decisions_api_tools = rank_with_timeout
@@ -201,7 +210,7 @@ async def _run(args: argparse.Namespace) -> Path:
                     row["agent_output_if_no_tool_call"] = agent_response_text(agent_result)
                 else:
                     row["agent_output_if_no_tool_call"] = agent_response_text(agent_result)
-                    row["error"] = "Jev rail did not complete tool selection."
+                    row["error"] = "System One rail did not complete tool selection."
             except Exception as exc:  # keep remaining benchmark queries running
                 row["error"] = f"{type(exc).__name__}: {exc}"
             finally:
@@ -228,10 +237,12 @@ async def _run(args: argparse.Namespace) -> Path:
             "When the agent completes without a tool call, its text output is "
             "included in that query record."
         ),
-        model=f"agent: {llm_config.model}; {router_name} router: {jev_model}",
+        model=f"agent: {llm_config.model}; {router_name} router: {discovery_model}",
         config_summary={
             "tool_discovery_backend": runtime_backend,
-            "tool_discovery_model": jev_model,
+            "tool_discovery_model": discovery_model,
+            "tool_discovery_max_len": os.getenv("MTRB_TOOL_DISCOVERY_MAX_LEN"),
+            "tool_discovery_head_max_len": os.getenv("MTRB_TOOL_DISCOVERY_HEAD_MAX_LEN"),
             "tool_discovery_max_tools": max_tools,
             "tool_discovery_min_score": min_score,
             "tool_discovery_include_no_tool": False,
@@ -258,7 +269,7 @@ def main() -> int:
     try:
         output = asyncio.run(_run(args))
     except Exception as exc:
-        raise SystemExit(f"Jev benchmark setup failed: {type(exc).__name__}: {exc}") from exc
+        raise SystemExit(f"System One benchmark setup failed: {type(exc).__name__}: {exc}") from exc
     print(f"Report written to: {output}")
     return 0
 
